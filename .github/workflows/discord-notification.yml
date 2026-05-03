@@ -1,4 +1,4 @@
-name: Detailed Discord Notification
+name: Automated Discord Notification
 
 on:
   pull_request:
@@ -13,23 +13,24 @@ jobs:
       - name: Send Detailed Discord Message
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
         run: |
           if [ "${{ github.event_name }}" == "pull_request" ]; then
             TITLE="[PR] ${{ github.event.pull_request.title }}"
             URL="${{ github.event.pull_request.html_url }}"
-            DESC="${{ github.event.pull_request.body }}"
+            DESC="$PR_BODY"
             AUTHOR="${{ github.event.pull_request.user.login }}"
             COLOR=3066993 
           else
             TITLE="[Issue] ${{ github.event.issue.title }}"
             URL="${{ github.event.issue.html_url }}"
-            DESC="${{ github.event.issue.body }}"
+            DESC="$ISSUE_BODY"
             AUTHOR="${{ github.event.issue.user.login }}"
             COLOR=15158332 
           fi
 
-
-          SHORT_DESC=$(echo "$DESC" | head -c 200 | tr -d '"' | tr -d '\r' | tr -d '\n')
+          CLEAN_DESC=$(echo "$DESC" | head -c 200 | tr -d '"' | tr -d '\r' | tr -d '\n' | tr -d '\\')
 
           JSON_DATA=$(cat <<EOF
           {
@@ -37,7 +38,7 @@ jobs:
               {
                 "title": "$TITLE",
                 "url": "$URL",
-                "description": "$SHORT_DESC...",
+                "description": "$CLEAN_DESC...",
                 "color": $COLOR,
                 "author": {
                   "name": "$AUTHOR",
@@ -56,8 +57,7 @@ jobs:
                   }
                 ],
                 "footer": {
-                  "text": "GitHub Actions Automation",
-                  "icon_url": "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png"
+                  "text": "GitHub Actions Automation"
                 },
                 "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
               }
@@ -69,4 +69,4 @@ jobs:
           curl -H "Content-Type: application/json" \
                -X POST \
                -d "$JSON_DATA" \
-               $DISCORD_WEBHOOK_URL
+               "$DISCORD_WEBHOOK_URL"
