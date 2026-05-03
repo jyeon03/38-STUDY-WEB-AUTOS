@@ -1,0 +1,72 @@
+name: Detailed Discord Notification
+
+on:
+  pull_request:
+    types: [opened, reopened]
+  issues:
+    types: [opened]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Detailed Discord Message
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            TITLE="[PR] ${{ github.event.pull_request.title }}"
+            URL="${{ github.event.pull_request.html_url }}"
+            DESC="${{ github.event.pull_request.body }}"
+            AUTHOR="${{ github.event.pull_request.user.login }}"
+            COLOR=3066993 
+          else
+            TITLE="[Issue] ${{ github.event.issue.title }}"
+            URL="${{ github.event.issue.html_url }}"
+            DESC="${{ github.event.issue.body }}"
+            AUTHOR="${{ github.event.issue.user.login }}"
+            COLOR=15158332 
+          fi
+
+
+          SHORT_DESC=$(echo "$DESC" | head -c 200 | tr -d '"' | tr -d '\r' | tr -d '\n')
+
+          JSON_DATA=$(cat <<EOF
+          {
+            "embeds": [
+              {
+                "title": "$TITLE",
+                "url": "$URL",
+                "description": "$SHORT_DESC...",
+                "color": $COLOR,
+                "author": {
+                  "name": "$AUTHOR",
+                  "icon_url": "https://github.com/${AUTHOR}.png"
+                },
+                "fields": [
+                  {
+                    "name": "Repository",
+                    "value": "${{ github.repository }}",
+                    "inline": true
+                  },
+                  {
+                    "name": "Event",
+                    "value": "${{ github.event_name }}",
+                    "inline": true
+                  }
+                ],
+                "footer": {
+                  "text": "GitHub Actions Automation",
+                  "icon_url": "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png"
+                },
+                "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+              }
+            ]
+          }
+          EOF
+          )
+
+          curl -H "Content-Type: application/json" \
+               -X POST \
+               -d "$JSON_DATA" \
+               $DISCORD_WEBHOOK_URL
