@@ -2,7 +2,7 @@ name: Automated Discord Notification
 
 on:
   pull_request:
-    types: [opened, reopened, review_requested]
+    types: [opened, reopened, review_requested, closed]
 
   pull_request_review:
     types: [submitted]
