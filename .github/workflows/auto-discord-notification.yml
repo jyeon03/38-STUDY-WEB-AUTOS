@@ -126,7 +126,7 @@ jobs:
               ]')
           fi
 
-          CLEAN_DESC=$(echo "$DESC" | head -c 200)
+          CLEAN_DESC="${DESC:0:200}"
 
           jq -n \
             --arg title "$TITLE" \
