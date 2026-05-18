@@ -1,0 +1,48 @@
+name: Auto Assign Reviewer
+
+on:
+  pull_request:
+    types: [opened, ready_for_review]
+
+jobs:
+  assign:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const base = context.payload.pull_request.base.ref
+            if (base !== 'main') {
+              console.log('Not targeting main — skip')
+              return
+            }
+
+            const reviewers = [
+              'jjangminii',
+              'ahyohyo',
+              'soyyyyy',
+              'jyeon03',
+              'jinaaaaaaaaaaaaa',
+              'kimminna',
+              'jin-evergreen'
+            ]
+
+            // PR 작성자 제외
+            const author = context.payload.pull_request.user.login
+            const candidates = reviewers.filter(r => r !== author)
+
+            // 리뷰어 배정
+            await github.rest.pulls.requestReviewers({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              reviewers: picked
+            })
+
+            // 어사이니 = PR 작성자 본인
+            await github.rest.issues.addAssignees({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              assignees: [author]
+            })
