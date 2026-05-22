@@ -42,29 +42,12 @@ jobs:
               return
             }
 
-            const reviewers = [
-              'jjangminii',
-              'ahyohyo',
-              'soyyyyy',
-              'jyeon03',
-              'jinaaaaaaaaaaaaa',
-              'kimminna',
-              'jin-evergreen'
-            ]
-
-            const candidates = reviewers.filter(r => r !== author)
-
-            if (candidates.length === 0) {
-              console.log('No reviewers available to request')
-              return
-            }
-
             try {
               await github.rest.pulls.requestReviewers({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 pull_number: context.payload.pull_request.number,
-                reviewers: candidates
+                team_reviewers: ['38-web-autos']
               })
             } catch (e) {
               console.warn(`Failed to request reviewers: ${e.message}`)
