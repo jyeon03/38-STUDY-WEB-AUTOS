@@ -21,12 +21,21 @@ jobs:
             const base = context.payload.pull_request.base.ref
             const author = context.payload.pull_request.user.login
 
-            await github.rest.issues.addAssignees({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
-              assignees: [author]
-            })
+            if (context.payload.pull_request.draft) {
+              console.log('Draft PR — skip reviewer')
+              return
+            }
+
+            try {
+              await github.rest.issues.addAssignees({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                assignees: [author]
+              })
+            } catch (e) {
+              console.warn(`Failed to add assignee: ${e.message}`)
+            }
 
             if (base !== 'main') {
               console.log('Not targeting main — skip reviewer')
@@ -45,9 +54,18 @@ jobs:
 
             const candidates = reviewers.filter(r => r !== author)
 
-            await github.rest.pulls.requestReviewers({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.payload.pull_request.number,
-              reviewers: candidates
-            })
+            if (candidates.length === 0) {
+              console.log('No reviewers available to request')
+              return
+            }
+
+            try {
+              await github.rest.pulls.requestReviewers({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.payload.pull_request.number,
+                reviewers: candidates
+              })
+            } catch (e) {
+              console.warn(`Failed to request reviewers: ${e.message}`)
+            }
