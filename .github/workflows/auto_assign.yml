@@ -42,12 +42,93 @@ jobs:
               return
             }
 
+            const currentPrNumber = context.payload.pull_request.number
+            const reviewerCount = 2
+            const reviewerWeights = {
+              jjangminii: 1,
+              ahyohyo: 1,
+              soyyyyy: 1,
+              jyeon03: 1,
+              jinaaaaaaaaaaaaa: 1,
+              kimminna: 1,
+              'jin-evergreen': 1
+            }
+
+            const candidates = Object.keys(reviewerWeights).filter(
+              reviewer => reviewer !== author
+            )
+            const reviewCounts = Object.fromEntries(
+              candidates.map(reviewer => [reviewer, 0])
+            )
+
+            if (candidates.length === 0) {
+              console.log('No reviewers available')
+              return
+            }
+
+            const pulls = await github.paginate(github.rest.pulls.list, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'all',
+              per_page: 100
+            })
+
+            for (const pr of pulls) {
+              if (pr.number === currentPrNumber) continue
+
+              const reviews = await github.paginate(github.rest.pulls.listReviews, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pr.number,
+                per_page: 100
+              })
+              const reviewedUsers = new Set()
+
+              for (const review of reviews) {
+                const reviewer = review.user?.login
+
+                if (reviewer in reviewCounts) {
+                  reviewedUsers.add(reviewer)
+                }
+              }
+
+              for (const reviewer of reviewedUsers) {
+                reviewCounts[reviewer] += 1
+              }
+            }
+
+            const tieBreakerStart = currentPrNumber % candidates.length
+            const getTieBreakerOrder = reviewer => {
+              const index = candidates.indexOf(reviewer)
+              return (index - tieBreakerStart + candidates.length) % candidates.length
+            }
+            const picked = []
+
+            while (picked.length < reviewerCount && picked.length < candidates.length) {
+              const selected = candidates
+                .filter(reviewer => !picked.includes(reviewer))
+                .sort((a, b) => {
+                  const scoreA = reviewCounts[a] / reviewerWeights[a]
+                  const scoreB = reviewCounts[b] / reviewerWeights[b]
+
+                  if (scoreA !== scoreB) return scoreA - scoreB
+                  if (reviewCounts[a] !== reviewCounts[b]) {
+                    return reviewCounts[a] - reviewCounts[b]
+                  }
+
+                  return getTieBreakerOrder(a) - getTieBreakerOrder(b)
+                })[0]
+
+              picked.push(selected)
+              reviewCounts[selected] += 1
+            }
+
             try {
               await github.rest.pulls.requestReviewers({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                pull_number: context.payload.pull_request.number,
-                team_reviewers: ['38-web-autos']
+                pull_number: currentPrNumber,
+                reviewers: picked
               })
             } catch (e) {
               console.warn(`Failed to request reviewers: ${e.message}`)
