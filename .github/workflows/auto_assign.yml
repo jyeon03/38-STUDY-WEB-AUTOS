@@ -4,6 +4,10 @@ on:
   pull_request:
     types: [opened, ready_for_review]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   assign:
     runs-on: ubuntu-latest
@@ -17,33 +21,34 @@ jobs:
             const base = context.payload.pull_request.base.ref
             const author = context.payload.pull_request.user.login
 
-            await github.rest.issues.addAssignees({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
-              assignees: [author]
-            })
+            try {
+              await github.rest.issues.addAssignees({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                assignees: [author]
+              })
+            } catch (e) {
+              console.warn(`Failed to add assignee: ${e.message}`)
+            }
+
+            if (context.payload.pull_request.draft) {
+              console.log('Draft PR — skip reviewer')
+              return
+            }
 
             if (base !== 'main') {
               console.log('Not targeting main — skip reviewer')
               return
             }
 
-            const reviewers = [
-              'jjangminii',
-              'ahyohyo',
-              'soyyyyy',
-              'jyeon03',
-              'jinaaaaaaaaaaaaa',
-              'kimminna',
-              'jin-evergreen'
-            ]
-
-            const candidates = reviewers.filter(r => r !== author)
-
-            await github.rest.pulls.requestReviewers({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.payload.pull_request.number,
-              reviewers: candidates
-            })
+            try {
+              await github.rest.pulls.requestReviewers({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.payload.pull_request.number,
+                team_reviewers: ['38-web-autos']
+              })
+            } catch (e) {
+              console.warn(`Failed to request reviewers: ${e.message}`)
+            }
