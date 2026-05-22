@@ -21,11 +21,6 @@ jobs:
             const base = context.payload.pull_request.base.ref
             const author = context.payload.pull_request.user.login
 
-            if (context.payload.pull_request.draft) {
-              console.log('Draft PR — skip reviewer')
-              return
-            }
-
             try {
               await github.rest.issues.addAssignees({
                 owner: context.repo.owner,
@@ -35,6 +30,11 @@ jobs:
               })
             } catch (e) {
               console.warn(`Failed to add assignee: ${e.message}`)
+            }
+
+            if (context.payload.pull_request.draft) {
+              console.log('Draft PR — skip reviewer')
+              return
             }
 
             if (base !== 'main') {
