@@ -135,14 +135,135 @@ if ! grep -Eq '^(diff --git |---[[:space:]]+(a/|/dev/null))' "$PATCH_FILE"; then
   exit 1
 fi
 
-if git apply --check "$PATCH_FILE"; then
-  git apply "$PATCH_FILE"
-elif git apply --check --recount "$PATCH_FILE"; then
-  git apply --recount "$PATCH_FILE"
-else
-  echo "AI response produced a patch that git apply could not read." >&2
-  nl -ba "$PATCH_FILE" >&2
-  exit 1
+apply_patch_file() {
+  local patch_file="$1"
+
+  if git apply --check "$patch_file"; then
+    git apply "$patch_file"
+    return 0
+  fi
+
+  if git apply --check --recount "$patch_file"; then
+    git apply --recount "$patch_file"
+    return 0
+  fi
+
+  return 1
+}
+
+repair_patch_file() {
+  local patch_file="$1"
+  local error_file="$2"
+  local repaired_file="$3"
+  local broken_patch
+  local apply_error
+  local repair_prompt
+  local repair_request_body
+  local repair_response
+  local repair_http_response
+  local repair_http_status
+
+  broken_patch=$(cat "$patch_file")
+  apply_error=$(cat "$error_file")
+
+  repair_prompt=$(cat <<EOF
+당신은 깨진 unified diff를 git apply가 적용할 수 있는 패치로 고치는 코드 수정 에이전트입니다.
+
+목표:
+- 아래의 git apply 에러와 깨진 patch를 보고, 현재 저장소 컨텍스트에 맞는 올바른 unified diff를 다시 출력합니다.
+
+중요 규칙:
+- 설명, 코드펜스, 마크다운을 출력하지 않습니다.
+- 출력은 반드시 git apply가 적용할 수 있는 unified diff만 포함합니다.
+- 가능하면 diff --git 헤더가 포함된 git diff 형식으로 출력합니다.
+- hunk header의 line count를 실제 변경 내용과 정확히 맞춥니다.
+- 깨진 patch가 의도한 기능은 유지하되, 현재 저장소 파일 내용에 적용 가능해야 합니다.
+
+base branch: $TARGET_BRANCH
+
+사용자 요청:
+---
+$TASK_CONTENT
+---
+
+git apply 에러:
+---
+$apply_error
+---
+
+깨진 patch:
+---
+$broken_patch
+---
+
+저장소 컨텍스트:
+---
+$REPO_CONTEXT
+---
+EOF
+)
+
+  repair_request_body=$(jq -n --arg prompt "$repair_prompt" '{
+    contents: [
+      {
+        role: "user",
+        parts: [{ text: $prompt }]
+      }
+    ],
+    generationConfig: {
+      temperature: 0
+    }
+  }')
+
+  repair_http_response=$(curl -sS -w '\n%{http_code}' -X POST \
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}" \
+    -H 'Content-Type: application/json' \
+    -d "$repair_request_body")
+
+  repair_http_status=$(printf '%s' "$repair_http_response" | tail -n 1)
+  repair_response=$(printf '%s' "$repair_http_response" | sed '$d')
+
+  if [ "$repair_http_status" != "200" ]; then
+    echo "Gemini patch repair failed with status $repair_http_status" >&2
+    echo "$repair_response" >&2
+    return 1
+  fi
+
+  printf '%s' "$repair_response" | jq -r '
+    .candidates[0].content.parts
+    | map(.text // "")
+    | join("")
+  ' | sed '/^```[a-zA-Z]*$/d' | awk '
+    found || /^(diff --git |---[[:space:]]+(a\/|\/dev\/null))/ {
+      found = 1
+      print
+    }
+  ' > "$repaired_file"
+
+  [ -s "$repaired_file" ]
+}
+
+APPLY_ERROR_FILE=$(mktemp)
+
+if ! apply_patch_file "$PATCH_FILE" 2> "$APPLY_ERROR_FILE"; then
+  REPAIRED_PATCH_FILE=$(mktemp)
+  echo "Initial AI patch could not be applied. Requesting a repaired patch..." >&2
+
+  if repair_patch_file "$PATCH_FILE" "$APPLY_ERROR_FILE" "$REPAIRED_PATCH_FILE" &&
+    apply_patch_file "$REPAIRED_PATCH_FILE" 2> "$APPLY_ERROR_FILE"; then
+    cp "$REPAIRED_PATCH_FILE" "$PATCH_FILE"
+  else
+    echo "AI response produced a patch that git apply could not read." >&2
+    echo "git apply error:" >&2
+    cat "$APPLY_ERROR_FILE" >&2
+    echo "Patch content:" >&2
+    nl -ba "$PATCH_FILE" >&2
+    if [ -n "${REPAIRED_PATCH_FILE:-}" ] && [ -s "$REPAIRED_PATCH_FILE" ]; then
+      echo "Repaired patch content:" >&2
+      nl -ba "$REPAIRED_PATCH_FILE" >&2
+    fi
+    exit 1
+  fi
 fi
 
 if git diff --quiet; then
