@@ -266,7 +266,7 @@ done
 
 extract_patch() {
   sed '/^```[a-zA-Z]*$/d' | awk '
-    /^diff --git / {
+    /^(diff --git |---[[:space:]]+(a\/|\/dev\/null))/ {
       found = 1
     }
     found {
@@ -289,7 +289,7 @@ fi
 
 printf '%s\n' "$PATCH_CONTENT" > "$PATCH_FILE"
 
-if ! grep -q '^diff --git ' "$PATCH_FILE"; then
+if ! grep -Eq '^(diff --git |---[[:space:]]+(a/|/dev/null))' "$PATCH_FILE"; then
   echo "AI response did not include an applicable unified diff." >&2
   sed -n '1,120p' "$PATCH_FILE" >&2
   exit 1
