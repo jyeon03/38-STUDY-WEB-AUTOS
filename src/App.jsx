@@ -1,16 +1,52 @@
 function App() {
   return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-950 px-6 text-white">
-      <section className="max-w-xl text-center">
-        <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-cyan-300">
-          Autos Study
-        </p>
-        <h1 className="text-4xl font-bold">React + Tailwind CSS 초기 세팅</h1>
-        <p className="mt-4 text-base leading-7 text-slate-300">
-          Vite 기반 React 앱과 Tailwind CSS 스타일링 환경이 준비되었습니다.
-        </p>
-      </section>
-    </main>
+    <div className="min-h-screen flex items-center justify-center bg-gray-100 p-4 sm:p-6">
+      <div className="bg-white p-8 rounded-lg shadow-md w-full max-w-md">
+        <h2 className="text-2xl font-bold text-center text-gray-800 mb-6">로그인</h2>
+        <form>
+          <div className="mb-4">
+            <label htmlFor="email" className="block text-gray-700 text-sm font-bold mb-2">
+              이메일
+            </label>
+            <input
+              type="email"
+              id="email"
+              className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+              placeholder="이메일을 입력하세요"
+              required
+            />
+          </div>
+          <div className="mb-6">
+            <label htmlFor="password" className="block text-gray-700 text-sm font-bold mb-2">
+              비밀번호
+            </label>
+            <input
+              type="password"
+              id="password"
+              className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 mb-3 leading-tight focus:outline-none focus:shadow-outline"
+              placeholder="비밀번호를 입력하세요"
+              required
+            />
+          </div>
+          <div className="flex items-center justify-between mb-6">
+            <button
+              type="submit"
+              className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline w-full"
+            >
+              로그인
+            </button>
+          </div>
+          <div className="text-center">
+            <a href="#" className="inline-block align-baseline font-bold text-sm text-blue-500 hover:text-blue-800 mr-4">
+              비밀번호 찾기
+            </a>
+            <a href="#" className="inline-block align-baseline font-bold text-sm text-blue-500 hover:text-blue-800">
+              회원가입
+            </a>
+          </div>
+        </form>
+      </div>
+    </div>
   );
 }
 
