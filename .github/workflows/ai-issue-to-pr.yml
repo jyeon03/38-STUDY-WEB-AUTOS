@@ -1,0 +1,282 @@
+name: AI Issue to PR
+
+on:
+  issue_comment:
+    types:
+      - created
+  workflow_dispatch:
+    inputs:
+      task:
+        description: AI에게 맡길 작업 내용
+        required: true
+        type: string
+      target_branch:
+        description: PR 대상 브랜치
+        required: false
+        default: test
+        type: choice
+        options:
+          - test
+          - main
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: ai-issue-to-pr-${{ github.event.issue.number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  create-ai-pr:
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'issue_comment' &&
+        !github.event.issue.pull_request &&
+        startsWith(github.event.comment.body, '/ai-pr')
+      )
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Resolve task context
+        id: context
+        uses: actions/github-script@v7
+        env:
+          INPUT_TASK: ${{ inputs.task }}
+          INPUT_TARGET_BRANCH: ${{ inputs.target_branch || 'test' }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            const taskFile = path.join(process.env.RUNNER_TEMP, 'ai-task.md');
+            const targetBranch =
+              context.eventName === 'workflow_dispatch'
+                ? process.env.INPUT_TARGET_BRANCH
+                : 'test';
+
+            let issueNumber = '';
+            let branchSuffix = `${context.runId}`;
+            let task = '';
+
+            if (context.eventName === 'workflow_dispatch') {
+              task = process.env.INPUT_TASK;
+            } else {
+              const issue = context.payload.issue;
+              const command = context.payload.comment.body.replace(/^\/ai-pr\s*/i, '').trim();
+
+              issueNumber = String(issue.number);
+              branchSuffix = `issue-${issue.number}`;
+              task = [
+                `Issue #${issue.number}: ${issue.title}`,
+                '',
+                'Issue body:',
+                issue.body || '(empty)',
+                '',
+                'AI command:',
+                command || '(use the issue body as the task)',
+              ].join('\n');
+            }
+
+            fs.writeFileSync(taskFile, task, 'utf8');
+            core.setOutput('task_file', taskFile);
+            core.setOutput('target_branch', targetBranch);
+            core.setOutput('issue_number', issueNumber);
+            core.setOutput('branch_name', `auto/ai-pr-${branchSuffix}`);
+
+      - name: Authorize AI PR request
+        if: github.event_name == 'issue_comment'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issueAuthor = context.payload.issue.user.login;
+            const commentAuthor = context.payload.comment.user.login;
+            const allowedPermissions = new Set(['admin', 'maintain', 'write']);
+
+            let permission = 'none';
+
+            try {
+              const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                username: commentAuthor,
+              });
+
+              permission = data.permission;
+            } catch (error) {
+              core.warning(`Failed to resolve repository permission for ${commentAuthor}: ${error.message}`);
+            }
+
+            const isIssueAuthor = issueAuthor === commentAuthor;
+            const hasWritePermission = allowedPermissions.has(permission);
+
+            if (isIssueAuthor && hasWritePermission) {
+              core.info(`Authorized /ai-pr request from ${commentAuthor} with ${permission} permission.`);
+              return;
+            }
+
+            const reason = [
+              !isIssueAuthor
+                ? `- 이슈 작성자(${issueAuthor})만 /ai-pr을 실행할 수 있습니다.`
+                : '',
+              !hasWritePermission
+                ? `- ${commentAuthor} 계정에는 repository write 이상 권한이 필요합니다. 현재 권한: ${permission}`
+                : '',
+            ].filter(Boolean).join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              body: [
+                'AI PR 요청을 실행하지 않았습니다.',
+                '',
+                reason,
+              ].join('\n'),
+            });
+
+            core.setFailed('Unauthorized /ai-pr request.');
+
+      - name: Acknowledge request
+        if: github.event_name == 'issue_comment'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              body: [
+                '🤖 AI PR 생성을 시작했습니다.',
+                '',
+                `- 대상 브랜치: \`${{ steps.context.outputs.target_branch }}\``,
+                `- 실행 로그: https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              ].join('\n'),
+            });
+
+      - name: Checkout target branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.context.outputs.target_branch }}
+          fetch-depth: 0
+
+      - name: Generate and apply AI patch
+        id: ai-patch
+        env:
+          GEMINI_API_KEY: ${{ secrets.PR_GEMINI_API_KEY }}
+        run: |
+          bash .github/scripts/generate-ai-patch.sh \
+            "${{ steps.context.outputs.task_file }}" \
+            "${{ steps.context.outputs.target_branch }}" \
+            "${RUNNER_TEMP}/ai-generated.patch"
+
+      - name: Setup pnpm
+        if: steps.ai-patch.outputs.changed == 'true'
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        if: steps.ai-patch.outputs.changed == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        if: steps.ai-patch.outputs.changed == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Run validation
+        if: steps.ai-patch.outputs.changed == 'true'
+        id: validation
+        continue-on-error: true
+        run: |
+          pnpm lint
+          pnpm test
+          pnpm build
+
+      - name: Create local AI branch
+        if: steps.ai-patch.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git switch -c "${{ steps.context.outputs.branch_name }}"
+          git add -A
+          git commit -m "feat: generate AI changes from issue"
+          git push --force-with-lease origin HEAD:"${{ steps.context.outputs.branch_name }}"
+
+      - name: Generate PR title and description
+        if: steps.ai-patch.outputs.changed == 'true'
+        id: generate-pr
+        env:
+          GEMINI_API_KEY: ${{ secrets.PR_GEMINI_API_KEY }}
+        run: |
+          bash .github/scripts/generate-pr-description.sh \
+            "${{ steps.context.outputs.target_branch }}" \
+            "${{ steps.context.outputs.branch_name }}"
+
+      - name: Create or update PR
+        if: steps.ai-patch.outputs.changed == 'true' && steps.generate-pr.outputs.should_create == 'true'
+        id: create-pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          existing_pr=$(gh pr list \
+            --head "${{ steps.context.outputs.branch_name }}" \
+            --base "${{ steps.context.outputs.target_branch }}" \
+            --state open \
+            --json number,url \
+            --jq '.[0] // empty')
+
+          if [ -n "$existing_pr" ]; then
+            pr_number=$(printf '%s' "$existing_pr" | jq -r '.number')
+            pr_url=$(printf '%s' "$existing_pr" | jq -r '.url')
+
+            gh pr edit "$pr_number" \
+              --title "$(cat "${{ steps.generate-pr.outputs.title_file }}")" \
+              --body-file "${{ steps.generate-pr.outputs.body_file }}"
+          else
+            pr_url=$(gh pr create \
+              --base "${{ steps.context.outputs.target_branch }}" \
+              --head "${{ steps.context.outputs.branch_name }}" \
+              --title "$(cat "${{ steps.generate-pr.outputs.title_file }}")" \
+              --body-file "${{ steps.generate-pr.outputs.body_file }}")
+          fi
+
+          echo "pull_request_url=$pr_url" >> "$GITHUB_OUTPUT"
+
+      - name: Link created PR
+        if: github.event_name == 'issue_comment' && steps.create-pr.outputs.pull_request_url != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const validation = '${{ steps.validation.outcome }}';
+            const note =
+              validation === 'success'
+                ? '검증 명령이 통과했습니다.'
+                : '검증 명령에서 실패가 발생했습니다. PR에서 로그를 확인해주세요.';
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              body: [
+                '🤖 AI가 작업 브랜치와 PR을 생성했습니다.',
+                '',
+                `- PR: ${{ steps.create-pr.outputs.pull_request_url }}`,
+                `- ${note}`,
+              ].join('\n'),
+            });
+
+      - name: Comment when no changes were generated
+        if: github.event_name == 'issue_comment' && steps.ai-patch.outputs.changed != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              body: 'AI가 적용 가능한 코드 변경 사항을 만들지 못해 PR을 생성하지 않았습니다.',
+            });
