@@ -114,7 +114,12 @@ PATCH_CONTENT=$(printf '%s' "$GEMINI_RESPONSE" | jq -r '
   .candidates[0].content.parts
   | map(.text // "")
   | join("")
-' | sed '/^```/d')
+' | sed '/^```[a-zA-Z]*$/d' | awk '
+  found || /^(diff --git |---[[:space:]]+(a\/|\/dev\/null))/ {
+    found = 1
+    print
+  }
+')
 
 if [ -z "$PATCH_CONTENT" ] || [ "$PATCH_CONTENT" = "null" ]; then
   echo "Gemini API returned an empty patch." >&2
@@ -130,8 +135,15 @@ if ! grep -Eq '^(diff --git |---[[:space:]]+(a/|/dev/null))' "$PATCH_FILE"; then
   exit 1
 fi
 
-git apply --check "$PATCH_FILE"
-git apply "$PATCH_FILE"
+if git apply --check "$PATCH_FILE"; then
+  git apply "$PATCH_FILE"
+elif git apply --check --recount "$PATCH_FILE"; then
+  git apply --recount "$PATCH_FILE"
+else
+  echo "AI response produced a patch that git apply could not read." >&2
+  nl -ba "$PATCH_FILE" >&2
+  exit 1
+fi
 
 if git diff --quiet; then
   echo "changed=false" >> "$GITHUB_OUTPUT"
