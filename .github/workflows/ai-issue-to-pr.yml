@@ -285,3 +285,9 @@ jobs:
               issue_number: context.payload.issue.number,
               body: 'AI가 적용 가능한 코드 변경 사항을 만들지 못해 PR을 생성하지 않았습니다.',
             });
+
+      - name: Fail when no changes were generated
+        if: steps.ai-patch.outputs.changed != 'true'
+        run: |
+          echo "AI did not generate applicable code changes. Pull request was not created."
+          exit 1
