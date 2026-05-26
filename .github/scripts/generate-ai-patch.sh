@@ -44,6 +44,158 @@ REPO_CONTEXT=$(
 
 TASK_CONTENT=$(cat "$TASK_FILE")
 
+setup_react_tailwind() {
+  jq '
+    .scripts = (.scripts + {
+      "dev": "vite",
+      "build": "vite build",
+      "preview": "vite preview",
+      "lint": "eslint ."
+    })
+    | .dependencies = ((.dependencies // {}) + {
+      "react": "^18.3.1",
+      "react-dom": "^18.3.1"
+    })
+    | .devDependencies = (.devDependencies + {
+      "@vitejs/plugin-react": "^4.3.1",
+      "autoprefixer": "^10.4.19",
+      "postcss": "^8.4.39",
+      "tailwindcss": "^3.4.4",
+      "vite": "^5.3.3"
+    })
+  ' package.json > package.tmp.json
+  mv package.tmp.json package.json
+
+  if ! grep -qx 'dist/' .gitignore; then
+    printf '\ndist/\n' >> .gitignore
+  fi
+
+  cat > eslint.config.js <<'EOF'
+import js from "@eslint/js";
+import globals from "globals";
+
+export default [
+  js.configs.recommended,
+  {
+    ignores: ["dist/**"],
+  },
+  {
+    files: ["**/*.{js,jsx}"],
+    languageOptions: {
+      ecmaVersion: "latest",
+      sourceType: "module",
+      parserOptions: {
+        ecmaFeatures: {
+          jsx: true,
+        },
+      },
+      globals: {
+        ...globals.node,
+        ...globals.browser,
+        ...globals.vitest,
+      },
+    },
+  },
+];
+EOF
+
+  cat > index.html <<'EOF'
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Autos React Setup</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
+EOF
+
+  cat > postcss.config.js <<'EOF'
+export default {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+};
+EOF
+
+  cat > tailwind.config.js <<'EOF'
+/** @type {import('tailwindcss').Config} */
+export default {
+  content: ["./index.html", "./src/**/*.{js,jsx,ts,tsx}"],
+  theme: {
+    extend: {},
+  },
+  plugins: [],
+};
+EOF
+
+  cat > vite.config.js <<'EOF'
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+
+export default defineConfig({
+  plugins: [react()],
+});
+EOF
+
+  cat > src/App.jsx <<'EOF'
+function App() {
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-slate-950 px-6 text-white">
+      <section className="max-w-xl text-center">
+        <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-cyan-300">
+          Autos Study
+        </p>
+        <h1 className="text-4xl font-bold">React + Tailwind CSS 초기 세팅</h1>
+        <p className="mt-4 text-base leading-7 text-slate-300">
+          Vite 기반 React 앱과 Tailwind CSS 스타일링 환경이 준비되었습니다.
+        </p>
+      </section>
+    </main>
+  );
+}
+
+export default App;
+EOF
+
+  cat > src/index.css <<'EOF'
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+EOF
+
+  cat > src/main.jsx <<'EOF'
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import App from "./App.jsx";
+import "./index.css";
+
+createRoot(document.getElementById("root")).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+);
+EOF
+}
+
+if printf '%s' "$TASK_CONTENT" | grep -Eiq 'react' &&
+  printf '%s' "$TASK_CONTENT" | grep -Eiq 'tailwind'; then
+  setup_react_tailwind
+
+  if git diff --quiet; then
+    echo "changed=false" >> "$GITHUB_OUTPUT"
+  else
+    echo "changed=true" >> "$GITHUB_OUTPUT"
+  fi
+
+  exit 0
+fi
+
 PROMPT=$(cat <<EOF
 당신은 GitHub Actions 안에서 실행되는 코드 수정 에이전트입니다.
 
