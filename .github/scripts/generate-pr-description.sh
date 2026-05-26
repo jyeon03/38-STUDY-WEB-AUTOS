@@ -109,8 +109,62 @@ REQUEST_BODY=$(jq -n --arg prompt "$PROMPT" '{
   }
 }')
 
+write_fallback_pr_draft() {
+  PR_TITLE="[chore] 자동 생성 PR 초안 작성"
+  PR_BODY_DRAFT=$(cat <<EOF
+## 👀 Summary
+
+- AI PR 본문 생성 중 Gemini API가 일시적으로 실패해 fallback 초안을 생성했습니다.
+- 변경 사항은 아래 커밋 목록과 파일 통계를 기준으로 직접 확인이 필요합니다.
+
+---
+
+## 🚨 해결하고 싶은 문제
+
+- 자동화된 PR 생성 흐름에서 코드 변경 후 PR 생성까지 이어지도록 처리합니다.
+- Gemini PR 설명 생성 API가 불안정한 경우에도 PR 생성 자체가 중단되지 않도록 합니다.
+
+---
+
+## 💻 구현 방식
+
+- base branch: \`$TARGET_BRANCH\`
+- head branch: \`$SOURCE_BRANCH\`
+- 커밋 목록과 diff 통계를 기반으로 PR 초안을 생성했습니다.
+
+\`\`\`text
+$COMMITS
+\`\`\`
+
+\`\`\`text
+$DIFF_STATS
+\`\`\`
+
+---
+
+## 🐾 테스트
+
+- 직접 보완 필요
+
+---
+
+## 🤬 어려웠던 점
+
+- Gemini API가 일시적으로 503 또는 빈 응답을 반환할 수 있어 fallback 본문을 사용했습니다.
+
+---
+
+## 📚 참고 자료
+
+- 직접 보완 필요
+EOF
+)
+}
+
 GEMINI_RESPONSE=""
-for attempt in 1 2 3; do
+GEMINI_OK=false
+
+for attempt in 1 2 3 4 5; do
   HTTP_RESPONSE=$(curl -sS -w '\n%{http_code}' -X POST \
     "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}" \
     -H 'Content-Type: application/json' \
@@ -120,36 +174,40 @@ for attempt in 1 2 3; do
   GEMINI_RESPONSE=$(printf '%s' "$HTTP_RESPONSE" | sed '$d')
 
   if [ "$HTTP_STATUS" = "200" ]; then
+    GEMINI_OK=true
     break
   fi
 
-  if [ "$attempt" -eq 3 ] || { [ "$HTTP_STATUS" != "429" ] && [ "${HTTP_STATUS#5}" = "$HTTP_STATUS" ]; }; then
-    echo "Gemini API request failed with status $HTTP_STATUS" >&2
+  if [ "$attempt" -eq 5 ] || { [ "$HTTP_STATUS" != "429" ] && [ "${HTTP_STATUS#5}" = "$HTTP_STATUS" ]; }; then
+    echo "Gemini API request failed with status $HTTP_STATUS. Falling back to a deterministic PR draft." >&2
     echo "$GEMINI_RESPONSE" >&2
-    exit 1
+    write_fallback_pr_draft
+    break
   fi
 
-  sleep $((attempt * 2))
+  sleep $((attempt * attempt * 2))
 done
 
-FULL_RESPONSE=$(printf '%s' "$GEMINI_RESPONSE" | jq -r '
-  .candidates[0].content.parts
-  | map(.text // "")
-  | join("")
-')
+if [ "$GEMINI_OK" = "true" ]; then
+  FULL_RESPONSE=$(printf '%s' "$GEMINI_RESPONSE" | jq -r '
+    .candidates[0].content.parts
+    | map(.text // "")
+    | join("")
+  ')
 
-if [ -z "$FULL_RESPONSE" ] || [ "$FULL_RESPONSE" = "null" ]; then
-  echo "Gemini API returned an empty response." >&2
-  echo "$GEMINI_RESPONSE" >&2
-  exit 1
-fi
+  if [ -z "$FULL_RESPONSE" ] || [ "$FULL_RESPONSE" = "null" ]; then
+    echo "Gemini API returned an empty response. Falling back to a deterministic PR draft." >&2
+    echo "$GEMINI_RESPONSE" >&2
+    write_fallback_pr_draft
+  else
+    PR_TITLE=$(printf '%s\n' "$FULL_RESPONSE" | sed -n 's/^TITLE:[[:space:]]*//p' | head -n 1)
+    PR_BODY_DRAFT=$(printf '%s\n' "$FULL_RESPONSE" | sed '1,/^---$/d')
 
-PR_TITLE=$(printf '%s\n' "$FULL_RESPONSE" | sed -n 's/^TITLE:[[:space:]]*//p' | head -n 1)
-PR_BODY_DRAFT=$(printf '%s\n' "$FULL_RESPONSE" | sed '1,/^---$/d')
-
-if [ -z "$PR_TITLE" ] || [ -z "$PR_BODY_DRAFT" ]; then
-  echo "Failed to parse Gemini response." >&2
-  exit 1
+    if [ -z "$PR_TITLE" ] || [ -z "$PR_BODY_DRAFT" ]; then
+      echo "Failed to parse Gemini response. Falling back to a deterministic PR draft." >&2
+      write_fallback_pr_draft
+    fi
+  fi
 fi
 
 TITLE_FILE=$(mktemp)
