@@ -55,6 +55,8 @@ PROMPT=$(cat <<EOF
 - 설명, 코드펜스, 마크다운을 출력하지 않습니다.
 - 출력은 반드시 git apply가 적용할 수 있는 unified diff만 포함합니다.
 - 가능하면 diff --git 헤더가 포함된 git diff 형식으로 출력합니다.
+- PR 제목, PR 본문, 참고 자료, 작업 요약, 테스트 설명은 절대 출력하지 않습니다.
+- 패치에 포함할 수 있는 줄은 diff metadata, hunk header, context line, added line, removed line뿐입니다.
 - 저장소에 실제로 존재하는 파일만 수정하거나, 필요한 경우 새 파일을 diff 형식으로 추가합니다.
 - 비밀값, 토큰, 인증 정보, 외부 네트워크 호출 코드를 추가하지 않습니다.
 - 과제와 무관한 리팩터링은 하지 않습니다.
@@ -110,16 +112,22 @@ for attempt in 1 2 3; do
   sleep $((attempt * 2))
 done
 
+extract_patch() {
+  sed '/^```[a-zA-Z]*$/d' | awk '
+    /^diff --git / {
+      found = 1
+    }
+    found {
+      print
+    }
+  '
+}
+
 PATCH_CONTENT=$(printf '%s' "$GEMINI_RESPONSE" | jq -r '
   .candidates[0].content.parts
   | map(.text // "")
   | join("")
-' | sed '/^```[a-zA-Z]*$/d' | awk '
-  found || /^(diff --git |---[[:space:]]+(a\/|\/dev\/null))/ {
-    found = 1
-    print
-  }
-')
+' | extract_patch)
 
 if [ -z "$PATCH_CONTENT" ] || [ "$PATCH_CONTENT" = "null" ]; then
   echo "Gemini API returned an empty patch." >&2
@@ -129,7 +137,7 @@ fi
 
 printf '%s\n' "$PATCH_CONTENT" > "$PATCH_FILE"
 
-if ! grep -Eq '^(diff --git |---[[:space:]]+(a/|/dev/null))' "$PATCH_FILE"; then
+if ! grep -q '^diff --git ' "$PATCH_FILE"; then
   echo "AI response did not include an applicable unified diff." >&2
   sed -n '1,120p' "$PATCH_FILE" >&2
   exit 1
@@ -176,6 +184,8 @@ repair_patch_file() {
 - 설명, 코드펜스, 마크다운을 출력하지 않습니다.
 - 출력은 반드시 git apply가 적용할 수 있는 unified diff만 포함합니다.
 - 가능하면 diff --git 헤더가 포함된 git diff 형식으로 출력합니다.
+- PR 제목, PR 본문, 참고 자료, 작업 요약, 테스트 설명은 절대 출력하지 않습니다.
+- 패치에 포함할 수 있는 줄은 diff metadata, hunk header, context line, added line, removed line뿐입니다.
 - hunk header의 line count를 실제 변경 내용과 정확히 맞춥니다.
 - 깨진 patch가 의도한 기능은 유지하되, 현재 저장소 파일 내용에 적용 가능해야 합니다.
 
@@ -233,12 +243,7 @@ EOF
     .candidates[0].content.parts
     | map(.text // "")
     | join("")
-  ' | sed '/^```[a-zA-Z]*$/d' | awk '
-    found || /^(diff --git |---[[:space:]]+(a\/|\/dev\/null))/ {
-      found = 1
-      print
-    }
-  ' > "$repaired_file"
+  ' | extract_patch > "$repaired_file"
 
   [ -s "$repaired_file" ]
 }
