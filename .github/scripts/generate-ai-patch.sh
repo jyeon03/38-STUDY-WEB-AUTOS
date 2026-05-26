@@ -57,11 +57,11 @@ setup_react_tailwind() {
       "react-dom": "^18.3.1"
     })
     | .devDependencies = (.devDependencies + {
-      "@vitejs/plugin-react": "^4.3.1",
+      "@vitejs/plugin-react": "^5.1.1",
       "autoprefixer": "^10.4.19",
       "postcss": "^8.4.39",
       "tailwindcss": "^3.4.4",
-      "vite": "^5.3.3"
+      "vite": "^7.2.4"
     })
   ' package.json > package.tmp.json
   mv package.tmp.json package.json
