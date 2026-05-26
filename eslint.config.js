@@ -4,12 +4,21 @@ import globals from "globals";
 export default [
   js.configs.recommended,
   {
-    files: ["**/*.js"],
+    ignores: ["dist/**"],
+  },
+  {
+    files: ["**/*.{js,jsx}"],
     languageOptions: {
       ecmaVersion: "latest",
       sourceType: "module",
+      parserOptions: {
+        ecmaFeatures: {
+          jsx: true,
+        },
+      },
       globals: {
         ...globals.node,
+        ...globals.browser,
         ...globals.vitest,
       },
     },
