@@ -53,7 +53,8 @@ PROMPT=$(cat <<EOF
 
 중요 규칙:
 - 설명, 코드펜스, 마크다운을 출력하지 않습니다.
-- 출력은 반드시 diff --git 으로 시작하는 패치만 포함합니다.
+- 출력은 반드시 git apply가 적용할 수 있는 unified diff만 포함합니다.
+- 가능하면 diff --git 헤더가 포함된 git diff 형식으로 출력합니다.
 - 저장소에 실제로 존재하는 파일만 수정하거나, 필요한 경우 새 파일을 diff 형식으로 추가합니다.
 - 비밀값, 토큰, 인증 정보, 외부 네트워크 호출 코드를 추가하지 않습니다.
 - 과제와 무관한 리팩터링은 하지 않습니다.
@@ -123,8 +124,8 @@ fi
 
 printf '%s\n' "$PATCH_CONTENT" > "$PATCH_FILE"
 
-if ! grep -q '^diff --git ' "$PATCH_FILE"; then
-  echo "AI response did not include a unified git diff." >&2
+if ! grep -Eq '^(diff --git |---[[:space:]]+(a/|/dev/null))' "$PATCH_FILE"; then
+  echo "AI response did not include an applicable unified diff." >&2
   sed -n '1,120p' "$PATCH_FILE" >&2
   exit 1
 fi
