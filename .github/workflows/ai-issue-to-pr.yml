@@ -58,17 +58,59 @@ jobs:
                 : 'test';
 
             let issueNumber = '';
-            let branchSuffix = `${context.runId}`;
             let task = '';
+            let issueType = 'feat';
+            let featureName = 'ai-pr';
+
+            const allowedTypes = new Set(['feat', 'fix', 'refactor', 'chore', 'docs', 'test', 'ci']);
+            const extractType = (text) => {
+              if (!text) return '';
+              const normalized = String(text).trim().toLowerCase();
+              const exactMatch = normalized.match(/^(feat|fix|refactor|chore|docs|test|ci)$/);
+              if (exactMatch) return exactMatch[1];
+
+              const prefixedMatch = normalized.match(/^\[?(feat|fix|refactor|chore|docs|test|ci)\]?(?:\s*[:\]-]|\s+)/);
+              if (prefixedMatch) return prefixedMatch[1];
+
+              const typedLabelMatch = normalized.match(/^type\s*[:/\-]\s*(feat|fix|refactor|chore|docs|test|ci)$/);
+              if (typedLabelMatch) return typedLabelMatch[1];
+
+              return '';
+            };
+            const removeTypePrefix = (text) => {
+              return String(text || '')
+                .trim()
+                .replace(/^\[?(feat|fix|refactor|chore|docs|test|ci)\]?(?:\s*[:\]-]|\s+)/i, '')
+                .trim();
+            };
+            const toBranchSlug = (text) => {
+              const slug = removeTypePrefix(text)
+                .toLowerCase()
+                .normalize('NFC')
+                .replace(/['"`]/g, '')
+                .replace(/[^a-z0-9가-힣]+/g, '-')
+                .replace(/^-+|-+$/g, '')
+                .replace(/-{2,}/g, '-');
+
+              return slug || 'ai-pr';
+            };
 
             if (context.eventName === 'workflow_dispatch') {
               task = process.env.INPUT_TASK;
+              issueType = extractType(task) || 'feat';
+              featureName = toBranchSlug(task);
+              issueNumber = `run-${context.runId}`;
             } else {
               const issue = context.payload.issue;
               const command = context.payload.comment.body.replace(/^\/ai-pr\s*/i, '').trim();
+              const labelType = (issue.labels || [])
+                .map((label) => extractType(label.name || label))
+                .find((type) => allowedTypes.has(type));
+              const titleType = extractType(issue.title);
 
               issueNumber = String(issue.number);
-              branchSuffix = `issue-${issue.number}`;
+              issueType = titleType || labelType || 'feat';
+              featureName = toBranchSlug(issue.title);
               task = [
                 `Issue #${issue.number}: ${issue.title}`,
                 '',
@@ -84,7 +126,8 @@ jobs:
             core.setOutput('task_file', taskFile);
             core.setOutput('target_branch', targetBranch);
             core.setOutput('issue_number', issueNumber);
-            core.setOutput('branch_name', `auto/ai-pr-${branchSuffix}`);
+            core.setOutput('issue_type', issueType);
+            core.setOutput('branch_name', `${issueType}/${featureName}/#${issueNumber}`);
 
       - name: Authorize AI PR request
         if: github.event_name == 'issue_comment'
@@ -208,7 +251,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git switch -c "${{ steps.context.outputs.branch_name }}"
           git add -A
-          git commit -m "feat: generate AI changes from issue"
+          git commit -m "${{ steps.context.outputs.issue_type }}: generate AI changes from issue"
           git push --force-with-lease origin HEAD:"${{ steps.context.outputs.branch_name }}"
 
       - name: Generate PR title and description
@@ -219,7 +262,8 @@ jobs:
         run: |
           bash .github/scripts/generate-pr-description.sh \
             "${{ steps.context.outputs.target_branch }}" \
-            "${{ steps.context.outputs.branch_name }}"
+            "${{ steps.context.outputs.branch_name }}" \
+            "${{ steps.context.outputs.issue_type }}"
 
       - name: Create or update PR
         if: steps.ai-patch.outputs.changed == 'true' && steps.generate-pr.outputs.should_create == 'true'

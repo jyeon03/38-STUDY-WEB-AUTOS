@@ -4,6 +4,12 @@ set -euo pipefail
 
 TARGET_BRANCH="$1"
 SOURCE_BRANCH="$2"
+REQUESTED_PR_TYPE="${3:-feat}"
+ALLOWED_PR_TYPE_PATTERN='^(feat|fix|refactor|chore|docs|test|ci)$'
+
+if ! printf '%s' "$REQUESTED_PR_TYPE" | grep -Eq "$ALLOWED_PR_TYPE_PATTERN"; then
+  REQUESTED_PR_TYPE="feat"
+fi
 
 if [ -z "${GEMINI_API_KEY:-}" ]; then
   echo "GEMINI_API_KEY is not configured." >&2
@@ -26,7 +32,7 @@ DIFF_CONTENT=$(git diff --unified=3 "$MERGE_BASE..HEAD" \
 if [ -z "$DIFF_CONTENT" ]; then
   {
     echo "should_create=false"
-    echo "title=[chore] 변경 사항 없음"
+    echo "title=[$REQUESTED_PR_TYPE] 변경 사항 없음"
     echo "body<<EOF"
     echo "변경 사항이 없어 PR을 생성하지 않습니다."
     echo "EOF"
@@ -51,7 +57,8 @@ PROMPT=$(cat <<EOF
 제목 규칙:
 - 반드시 한국어로 작성합니다.
 - 형식은 "[type] 작업 내용"입니다.
-- type은 feat, fix, refactor, chore, docs, test, ci 중 하나만 사용합니다.
+- type은 반드시 "$REQUESTED_PR_TYPE"을 사용합니다.
+- issue type과 PR title type이 일치해야 하므로 다른 type으로 바꾸지 않습니다.
 - 60자 이내를 권장합니다.
 
 본문 규칙:
@@ -68,13 +75,14 @@ PROMPT=$(cat <<EOF
 - HTML 주석은 제거하고 실제 초안 문장을 작성합니다.
 
 출력 형식:
-TITLE: [feat] 예시 제목
+TITLE: [$REQUESTED_PR_TYPE] 예시 제목
 ---
 아래 PR 템플릿 구조를 유지한 완성된 마크다운 본문
 
 PR 정보:
 - base branch: $TARGET_BRANCH
 - head branch: $SOURCE_BRANCH
+- issue type: $REQUESTED_PR_TYPE
 
 PR 템플릿:
 ---
@@ -110,7 +118,7 @@ REQUEST_BODY=$(jq -n --arg prompt "$PROMPT" '{
 }')
 
 write_fallback_pr_draft() {
-  PR_TITLE="[chore] 자동 생성 PR 초안 작성"
+  PR_TITLE="[$REQUESTED_PR_TYPE] 자동 생성 PR 초안 작성"
   PR_BODY_DRAFT=$(cat <<EOF
 ## 👀 Summary
 
@@ -209,6 +217,21 @@ if [ "$GEMINI_OK" = "true" ]; then
     fi
   fi
 fi
+
+normalize_pr_title_type() {
+  local raw_title="$1"
+  local title_without_type
+
+  title_without_type=$(printf '%s' "$raw_title" | sed -E 's/^\[?(feat|fix|refactor|chore|docs|test|ci)\]?[[:space:]]*[:：-]?[[:space:]]*//I')
+
+  if [ -z "$title_without_type" ]; then
+    title_without_type="자동 생성 PR 초안 작성"
+  fi
+
+  printf '[%s] %s' "$REQUESTED_PR_TYPE" "$title_without_type"
+}
+
+PR_TITLE=$(normalize_pr_title_type "$PR_TITLE")
 
 TITLE_FILE=$(mktemp)
 BODY_FILE=$(mktemp)
